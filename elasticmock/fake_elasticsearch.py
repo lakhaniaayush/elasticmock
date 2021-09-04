@@ -2,6 +2,7 @@
 import datetime
 import json
 import sys
+import re
 from collections import defaultdict
 
 import dateutil.parser
@@ -36,6 +37,7 @@ class QueryType:
     MINIMUM_SHOULD_MATCH = 'MINIMUM_SHOULD_MATCH'
     MULTI_MATCH = 'MULTI_MATCH'
     MUST_NOT = 'MUST_NOT'
+    QUERY_STRING = 'QUERY_STRING'
 
     @staticmethod
     def get_query_type(type_str):
@@ -63,6 +65,8 @@ class QueryType:
             return QueryType.MULTI_MATCH
         elif type_str == 'must_not':
             return QueryType.MUST_NOT
+        elif type_str == 'query_string':
+            return QueryType.QUERY_STRING
         else:
             raise NotImplementedError(f'type {type_str} is not implemented for QueryType')
 
@@ -112,6 +116,8 @@ class FakeQueryCondition:
             return self._evaluate_for_multi_match_query_type(document)
         elif self.type == QueryType.MUST_NOT:
             return self._evaluate_for_must_not_query_type(document)
+        elif self.type == QueryType.QUERY_STRING:
+            return self._evaluate_for_query_string_query_type(document)
         else:
             raise NotImplementedError('Fake query evaluation not implemented for query type: %s' % self.type)
 
@@ -120,6 +126,9 @@ class FakeQueryCondition:
 
     def _evaluate_for_term_query_type(self, document):
         return self._evaluate_for_field(document, False)
+
+    def _evaluate_for_query_string_query_type(self, document):
+        return self._evaluate_for_fields(document, wildcard_string=True)
 
     def _evaluate_for_terms_query_type(self, document):
         for field in self.condition:
@@ -142,7 +151,7 @@ class FakeQueryCondition:
                 break
         return return_val
 
-    def _evaluate_for_fields(self, document):
+    def _evaluate_for_fields(self, document, wildcard_string=False):
         doc_source = document['_source']
         return_val = False
         value = self.condition.get('query')
@@ -154,7 +163,8 @@ class FakeQueryCondition:
                 doc_source,
                 field,
                 value,
-                True
+                True,
+                wildcard_string
             )
             if return_val:
                 break
@@ -251,7 +261,7 @@ class FakeQueryCondition:
     def _evaluate_for_multi_match_query_type(self, document):
         return self._evaluate_for_fields(document)
 
-    def _compare_value_for_field(self, doc_source, field, value, ignore_case):
+    def _compare_value_for_field(self, doc_source, field, value, ignore_case, wildcard_string=False):
         if ignore_case and isinstance(value, str):
             value = value.lower()
 
@@ -281,8 +291,17 @@ class FakeQueryCondition:
                 return True
             if isinstance(val, str) and str(value) in val:
                 return True
+            if wildcard_string and self.wildcard_pattern_match(str(value), val):
+                return True
 
         return False
+    
+    @staticmethod
+    def wildcard_pattern_match(pattern, value):
+        pattern = pattern.replace('?', '.')
+        pattern = pattern.replace('*', '.+')
+        reg = re.compile(pattern)
+        return bool(re.match(reg, value))
 
 
 @for_all_methods([server_failure])
